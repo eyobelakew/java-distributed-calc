@@ -1,0 +1,6 @@
+@echo off
+echo Starting Calculator Server...
+start "Calculator Server" cmd /k "java -cp target/classes com.calculator.CalculatorServer"
+timeout /t 2
+echo Starting Calculator Client...
+java --module-path "C:\Program Files\Java\javafx-sdk-19.0.2.1\lib" --add-modules javafx.controls,javafx.fxml -cp target/classes com.calculator.CalculatorClient 
