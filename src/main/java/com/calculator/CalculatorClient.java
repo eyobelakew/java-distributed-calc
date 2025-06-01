@@ -16,24 +16,25 @@ import java.net.Socket;
 public class CalculatorClient extends Application {
     private static final String SERVER_HOST = "localhost";
     private static final int SERVER_PORT = 5000;
+    private static final int SOCKET_TIMEOUT = 5000; // 5 seconds timeout
 
     private TextField number1Field;
     private TextField number2Field;
-    private ComboBox<String> operatorComboBox;
     private Label resultLabel;
     private Button calculateButton;
     private static final String BACKGROUND_COLOR = "#2C3E50";
     private static final String ACCENT_COLOR = "#3498DB";
-    private static final String SUCCESS_COLOR = "#2ECC71";
     private static final String ERROR_COLOR = "#E74C3C";
+    private VBox resultsBox;
 
     @Override
     public void start(Stage primaryStage) {
         number1Field = createStyledTextField("Enter first number");
         number2Field = createStyledTextField("Enter second number");
-        operatorComboBox = createStyledComboBox();
-        resultLabel = createStyledLabel("Result:");
+        resultLabel = createStyledLabel("Results:");
         calculateButton = createStyledButton();
+        resultsBox = new VBox(10);
+        resultsBox.setAlignment(Pos.CENTER);
 
         VBox root = new VBox(25);
         root.setAlignment(Pos.CENTER);
@@ -52,20 +53,21 @@ public class CalculatorClient extends Application {
 
         HBox inputBox = new HBox(15);
         inputBox.setAlignment(Pos.CENTER);
-        inputBox.getChildren().addAll(number1Field, operatorComboBox, number2Field);
+        inputBox.getChildren().addAll(number1Field, number2Field);
 
         root.getChildren().addAll(
                 titleLabel,
                 userInfoLabel,
                 inputBox,
                 calculateButton,
-                resultLabel);
+                resultLabel,
+                resultsBox);
 
         calculateButton.setOnAction(e -> performCalculation());
         number1Field.textProperty().addListener((obs, oldVal, newVal) -> validateInput(number1Field));
         number2Field.textProperty().addListener((obs, oldVal, newVal) -> validateInput(number2Field));
 
-        Scene scene = new Scene(root, 500, 400);
+        Scene scene = new Scene(root, 800, 600);
         primaryStage.setTitle("Distributed Calculator");
         primaryStage.setScene(scene);
         primaryStage.show();
@@ -78,16 +80,6 @@ public class CalculatorClient extends Application {
                 "-fx-font-size: 14px; -fx-padding: 8px; -fx-background-radius: 5px; " +
                 "-fx-pref-width: 120px;");
         return field;
-    }
-
-    private ComboBox<String> createStyledComboBox() {
-        ComboBox<String> comboBox = new ComboBox<>();
-        comboBox.getItems().addAll("+", "-", "*", "/");
-        comboBox.setValue("+");
-        comboBox.setStyle("-fx-background-color: white; -fx-text-fill: " + BACKGROUND_COLOR + "; " +
-                "-fx-font-size: 14px; -fx-padding: 8px; -fx-background-radius: 5px; " +
-                "-fx-pref-width: 80px;");
-        return comboBox;
     }
 
     private Label createStyledLabel(String text) {
@@ -128,22 +120,106 @@ public class CalculatorClient extends Application {
 
             double number1 = Double.parseDouble(number1Field.getText());
             double number2 = Double.parseDouble(number2Field.getText());
-            String operator = operatorComboBox.getValue();
 
-            CalculatorRequest request = new CalculatorRequest(number1, number2, operator);
+            // Clear previous results
+            resultsBox.getChildren().clear();
 
-            try (Socket socket = new Socket(SERVER_HOST, SERVER_PORT);
-                    ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
-                    ObjectInputStream in = new ObjectInputStream(socket.getInputStream())) {
+            // Define operations with their labels
+            String[][] operations = {
+                    { "+", "Sum" },
+                    { "-", "Difference" },
+                    { "*", "Product" },
+                    { "/", "Quotient" }
+            };
 
-                out.writeObject(request);
-                out.flush();
+            for (String[] op : operations) {
+                String operator = op[0];
+                String label = op[1];
 
-                CalculatorResponse response = (CalculatorResponse) in.readObject();
-                displayResult(response);
+                try {
+                    // Create HBox for each operation to hold label and result horizontally
+                    HBox operationBox = new HBox(10); // 10 pixels spacing between elements
+                    operationBox.setAlignment(Pos.CENTER_LEFT);
 
-            } catch (IOException | ClassNotFoundException e) {
-                showError("Connection error: " + e.getMessage());
+                    // Add the operation label
+                    Label operationLabel = new Label(label + ":");
+                    operationLabel.setFont(Font.font("System", FontWeight.BOLD, 16));
+                    operationLabel.setTextFill(Color.WHITE);
+                    operationLabel.setMinWidth(100); // Fixed width for labels
+
+                    // Create a new connection for each operation
+                    Socket socket = new Socket();
+                    socket.connect(new java.net.InetSocketAddress(SERVER_HOST, SERVER_PORT), SOCKET_TIMEOUT);
+
+                    try (ObjectOutputStream out = new ObjectOutputStream(socket.getOutputStream());
+                            ObjectInputStream in = new ObjectInputStream(socket.getInputStream())) {
+
+                        CalculatorRequest request = new CalculatorRequest(number1, number2, operator);
+                        out.writeObject(request);
+                        out.flush();
+
+                        CalculatorResponse response = (CalculatorResponse) in.readObject();
+                        if (response.isSuccess()) {
+                            Label resultLabel = new Label(String.format("%.2f %s %.2f = %.2f",
+                                    number1, operator, number2, response.getResult()));
+                            resultLabel.setFont(Font.font("System", 16));
+                            resultLabel.setTextFill(Color.WHITE);
+                            operationBox.getChildren().addAll(operationLabel, resultLabel);
+                        } else {
+                            Label errorLabel = new Label(String.format("%.2f %s %.2f = Error: %s",
+                                    number1, operator, number2, response.getErrorMessage()));
+                            errorLabel.setFont(Font.font("System", 16));
+                            errorLabel.setTextFill(Color.web(ERROR_COLOR));
+                            operationBox.getChildren().addAll(operationLabel, errorLabel);
+                        }
+                    } finally {
+                        try {
+                            socket.close();
+                        } catch (IOException e) {
+                            // Ignore close errors
+                        }
+                    }
+                    resultsBox.getChildren().add(operationBox);
+                } catch (java.net.SocketTimeoutException e) {
+                    HBox errorBox = new HBox(10);
+                    errorBox.setAlignment(Pos.CENTER_LEFT);
+                    Label operationLabel = new Label(label + ":");
+                    operationLabel.setFont(Font.font("System", FontWeight.BOLD, 16));
+                    operationLabel.setTextFill(Color.WHITE);
+                    operationLabel.setMinWidth(100);
+                    Label errorLabel = new Label(String.format("%.2f %s %.2f = Timeout",
+                            number1, operator, number2));
+                    errorLabel.setFont(Font.font("System", 16));
+                    errorLabel.setTextFill(Color.web(ERROR_COLOR));
+                    errorBox.getChildren().addAll(operationLabel, errorLabel);
+                    resultsBox.getChildren().add(errorBox);
+                } catch (java.net.ConnectException e) {
+                    HBox errorBox = new HBox(10);
+                    errorBox.setAlignment(Pos.CENTER_LEFT);
+                    Label operationLabel = new Label(label + ":");
+                    operationLabel.setFont(Font.font("System", FontWeight.BOLD, 16));
+                    operationLabel.setTextFill(Color.WHITE);
+                    operationLabel.setMinWidth(100);
+                    Label errorLabel = new Label(String.format("%.2f %s %.2f = Server not available",
+                            number1, operator, number2));
+                    errorLabel.setFont(Font.font("System", 16));
+                    errorLabel.setTextFill(Color.web(ERROR_COLOR));
+                    errorBox.getChildren().addAll(operationLabel, errorLabel);
+                    resultsBox.getChildren().add(errorBox);
+                } catch (IOException | ClassNotFoundException e) {
+                    HBox errorBox = new HBox(10);
+                    errorBox.setAlignment(Pos.CENTER_LEFT);
+                    Label operationLabel = new Label(label + ":");
+                    operationLabel.setFont(Font.font("System", FontWeight.BOLD, 16));
+                    operationLabel.setTextFill(Color.WHITE);
+                    operationLabel.setMinWidth(100);
+                    Label errorLabel = new Label(String.format("%.2f %s %.2f = Error: %s",
+                            number1, operator, number2, e.getMessage()));
+                    errorLabel.setFont(Font.font("System", 16));
+                    errorLabel.setTextFill(Color.web(ERROR_COLOR));
+                    errorBox.getChildren().addAll(operationLabel, errorLabel);
+                    resultsBox.getChildren().add(errorBox);
+                }
             }
 
         } catch (NumberFormatException e) {
@@ -156,22 +232,7 @@ public class CalculatorClient extends Application {
             showError("Please fill in all fields");
             return false;
         }
-        if (operatorComboBox.getValue() == null) {
-            showError("Please select an operator");
-            return false;
-        }
         return true;
-    }
-
-    private void displayResult(CalculatorResponse response) {
-        if (response.isSuccess()) {
-            resultLabel.setText(String.format("Result: %.2f", response.getResult()));
-            resultLabel.setTextFill(Color.web(SUCCESS_COLOR));
-            resultLabel.setStyle(
-                    "-fx-background-color: rgba(46, 204, 113, 0.1); -fx-padding: 10px; -fx-background-radius: 5px;");
-        } else {
-            showError(response.getErrorMessage());
-        }
     }
 
     private void showError(String message) {
